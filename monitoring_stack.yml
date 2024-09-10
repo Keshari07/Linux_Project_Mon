@@ -1,0 +1,208 @@
+---
+- name: Deploy Prometheus, Node Exporter, Alert Manager, and Grafana
+  hosts: monitoring
+  become: yes
+
+  vars:
+    prometheus_version: "2.33.4"
+    node_exporter_version: "1.3.1"
+    alertmanager_version: "0.24.0"
+    grafana_version: "9.0.0"
+
+  tasks:
+    - name: Install dependencies
+      apt:
+        name:
+          - wget
+          - tar
+          - unzip
+        state: present
+
+    - name: Create directories for Prometheus, Node Exporter, Alert Manager, and Grafana
+      file:
+        path: "/opt/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - prometheus
+        - node_exporter
+        - alertmanager
+        - grafana
+
+    - name: Download and extract Prometheus
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+        dest: "/tmp/prometheus.tar.gz"
+      notify: extract_prometheus
+
+    - name: Download and extract Node Exporter
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+        dest: "/tmp/node_exporter.tar.gz"
+      notify: extract_node_exporter
+
+    - name: Download and extract Alert Manager
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/alertmanager/releases/download/v{{ alertmanager_version }}/alertmanager-{{ alertmanager_version }}.linux-amd64.tar.gz"
+        dest: "/tmp/alertmanager.tar.gz"
+      notify: extract_alertmanager
+
+    - name: Download and install Grafana
+      ansible.builtin.get_url:
+        url: "https://dl.grafana.com/oss/release/grafana-{{ grafana_version }}.linux-amd64.tar.gz"
+        dest: "/tmp/grafana.tar.gz"
+      notify: extract_grafana
+
+  handlers:
+    - name: extract_prometheus
+      unarchive:
+        src: "/tmp/prometheus.tar.gz"
+        dest: "/opt/prometheus"
+        remote_src: yes
+
+    - name: extract_node_exporter
+      unarchive:
+        src: "/tmp/node_exporter.tar.gz"
+        dest: "/opt/node_exporter"
+        remote_src: yes
+
+    - name: extract_alertmanager
+      unarchive:
+        src: "/tmp/alertmanager.tar.gz"
+        dest: "/opt/alertmanager"
+        remote_src: yes
+
+    - name: extract_grafana
+      unarchive:
+        src: "/tmp/grafana.tar.gz"
+        dest: "/opt/grafana"
+        remote_src: yes
+
+    - name: Configure Prometheus
+      copy:
+        content: |
+          global:
+            scrape_interval: 15s
+          scrape_configs:
+            - job_name: 'prometheus'
+              static_configs:
+                - targets: ['localhost:9090']
+            - job_name: 'node_exporter'
+              static_configs:
+                - targets: ['localhost:9100']
+          rule_files:
+            - /opt/prometheus/rules.yml
+        dest: /opt/prometheus/prometheus.yml
+
+    - name: Configure Alertmanager
+      copy:
+        content: |
+          global:
+            resolve_timeout: 5m
+          route:
+            group_by: ['alertname']
+            group_wait: 30s
+            group_interval: 5m
+            repeat_interval: 12h
+            receiver: 'email'
+          receivers:
+            - name: 'email'
+              email_configs:
+                - to: '<your_email@example.com>'
+                  from: 'alertmanager@example.com'
+                  smarthost: 'smtp.example.com:587'
+                  auth_username: 'alertmanager@example.com'
+                  auth_password: 'password'
+        dest: /opt/alertmanager/alertmanager.yml
+
+    - name: Create systemd service for Prometheus
+      copy:
+        content: |
+          [Unit]
+          Description=Prometheus
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          User=root
+          ExecStart=/opt/prometheus/prometheus --config.file=/opt/prometheus/prometheus.yml --storage.tsdb.path=/opt/prometheus/data
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/prometheus.service
+
+    - name: Create systemd service for Node Exporter
+      copy:
+        content: |
+          [Unit]
+          Description=Node Exporter
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          User=root
+          ExecStart=/opt/node_exporter/node_exporter
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/node_exporter.service
+
+    - name: Create systemd service for Alert Manager
+      copy:
+        content: |
+          [Unit]
+          Description=Alert Manager
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          User=root
+          ExecStart=/opt/alertmanager/alertmanager --config.file=/opt/alertmanager/alertmanager.yml --storage.path=/opt/alertmanager/data
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/alertmanager.service
+
+    - name: Create systemd service for Grafana
+      copy:
+        content: |
+          [Unit]
+          Description=Grafana
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          User=root
+          ExecStart=/opt/grafana/bin/grafana-server --homepath=/opt/grafana --config=/opt/grafana/conf/defaults.ini
+
+          [Install]
+          WantedBy=multi-user.target
+        dest: /etc/systemd/system/grafana.service
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Start and enable Prometheus
+      systemd:
+        name: prometheus
+        state: started
+        enabled: yes
+
+    - name: Start and enable Node Exporter
+      systemd:
+        name: node_exporter
+        state: started
+        enabled: yes
+
+    - name: Start and enable Alert Manager
+      systemd:
+        name: alertmanager
+        state: started
+        enabled: yes
+
+    - name: Start and enable Grafana
+      systemd:
+        name: grafana
+        state: started
+        enabled: yes
